@@ -8,6 +8,7 @@
 #include "HG4930DataRecDlg.h"
 #include "Dbt.h"
 #include "math.h"
+#include <ctime>
 #include "afxdialogex.h"
 
 #ifdef _DEBUG
@@ -20,9 +21,19 @@ constexpr float m_g = 9.805989024;
 #define AccLSBW01 pow(2,-14)*600*0.3048
 #define AguLSBW02 pow(2,-15)*499*pi/180
 #define AccLSBW02 pow(2,-15)*21*m_g
+#define USER_TIMER1 1
 
-int BaudRate[] = { 9600, 14400, 19200, 38400, 56000, 57600, 115200 };
+int BaudRate[] = { 9600, 14400, 19200, 38400, 56000, 57600, 115200, 1048576 };
 CSerialPort m_Com;
+CFile file;
+int mDataCount = 0, mPreDataCount = 0;
+int mFrameRate = 0;
+double mSec = 0;
+BOOL fileOpenFlag = 0;
+BOOL oneSecFlag = 0;
+char cmCtrlMeas0 = 0, cmCtrlMeas1 = 0;
+float fmAguRateX = 0, fmAguRateY = 0, fmAguRateZ = 0, fmAccX = 0, fmAccY = 0, fmAccZ = 0;
+long float  lfmAngDeltaX = 0, lfmAngDeltaY = 0, lfmAngDeltaZ = 0, lfmVelDeltaX = 0, lfmVelDeltaY = 0, lfmVelDeltaZ = 0;
 // 用于应用程序“关于”菜单项的 CAboutDlg 对话框
 
 class CAboutDlg : public CDialogEx
@@ -93,6 +104,7 @@ void CHG4930DataRecDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_EDIT13, m_VelDeltaY);
 	DDX_Control(pDX, IDC_EDIT15, m_VelDeltaZ);
 	DDX_Control(pDX, IDOK, m_OpenCom);
+	DDX_Control(pDX, IDC_BUTTON1, m_ChosePath);
 }
 
 BEGIN_MESSAGE_MAP(CHG4930DataRecDlg, CDialogEx)
@@ -104,6 +116,8 @@ BEGIN_MESSAGE_MAP(CHG4930DataRecDlg, CDialogEx)
 	ON_MESSAGE(WM_COMM_RXSTR, &CHG4930DataRecDlg::OnReceiveStr)   // 串口接收处理函数
 	ON_BN_CLICKED(IDOK, &CHG4930DataRecDlg::OnBnClickedBtnOpen)
 	ON_BN_CLICKED(IDCANCEL, &CHG4930DataRecDlg::OnBnClickedSend)
+	ON_BN_CLICKED(IDC_BUTTON1, &CHG4930DataRecDlg::OnBnClickedChosePath)
+	ON_WM_TIMER()
 END_MESSAGE_MAP()
 
 
@@ -172,15 +186,7 @@ BOOL CHG4930DataRecDlg::OnInitDialog()
 	m_PortNum.SetCurSel(0);
 
 	OnBnClickedBtnOpen();
-	m_RawData.SetWindowText(_T("Initialized!"));
-	//AddCom();
-	//m_PortNum.SetCurSel(0);
-	//m_BaudRate.SetCurSel(0);   // 设置BaudRate的初始值参数列表的第一项
-	//m_DataBit.SetCurSel(0);
-	//m_CaliBit.SetCurSel(0);
-	//m_StopBit.SetCurSel(0);
-	//m_StreamBit.SetCurSel(0);
-	
+	//m_RawData.SetWindowText(_T("Initialized!"));
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -235,6 +241,7 @@ HCURSOR CHG4930DataRecDlg::OnQueryDragIcon()
 }
 // 自己定义的函数
 LRESULT CHG4930DataRecDlg::OnReceiveStr(WPARAM strRec, LPARAM commPort) {
+	clock_t time_stt = clock();
 	struct serialPortInfo
 	{
 		UINT portNr;//串口号
@@ -242,18 +249,13 @@ LRESULT CHG4930DataRecDlg::OnReceiveStr(WPARAM strRec, LPARAM commPort) {
 	}*pCommInfo;
 	pCommInfo = (serialPortInfo*)commPort;
 	int mBytes = pCommInfo->bytesRead;	
-	CString str0((char*)strRec);
+	CString str0;// ((char*)strRec);
 	char* RecData = (char*)strRec;
-	// 原始数据显示 调试用
-	CString str1;
-	//str0.Format(_T("%x"),RecData);
-	m_RawData.SetSel(-1,-1);
-	m_RawData.ReplaceSel(str0);	
-	// 数据解析1
-	char cmCtrlMeas0 = 0, cmCtrlMeas1 = 0;
-	float fmAguRateX=0, fmAguRateY=0, fmAguRateZ=0,  fmAccX=0 , fmAccY=0, fmAccZ=0;
-	long float  lfmAngDeltaX=0, lfmAngDeltaY=0, lfmAngDeltaZ=0,
-				lfmVelDeltaX=0, lfmVelDeltaY=0, lfmVelDeltaZ=0;
+	// 原始数据显示 调试用	
+	//str0.Format(_T("%p"),RecData);
+	//m_RawData.SetSel(-1,-1);
+	//m_RawData.ReplaceSel(str0);		
+	// 数据解析1	
 	CString mCtrlMeas,mAguRateX, mAguRateY, mAguRateZ, mAccX, mAccY, mAccZ;
 	CString  mAngDeltaX, mAngDeltaY, mAngDeltaZ,mVelDeltaX, mVelDeltaY, mVelDeltaZ;
 	// ***数据解析部分****//
@@ -262,7 +264,7 @@ LRESULT CHG4930DataRecDlg::OnReceiveStr(WPARAM strRec, LPARAM commPort) {
 	{
 		cmCtrlMeas0 = RecData[0];      //0x0e
 		cmCtrlMeas1 = RecData[1];	   // 0x01 |0x02 | 0xCA
-		mCtrlMeas.Format(_T("%01x%01x"), cmCtrlMeas0,cmCtrlMeas1);
+		mCtrlMeas.Format(_T("%01x %01x"), cmCtrlMeas0,cmCtrlMeas1);
 		m_CtrlMeassage.SetWindowText(mCtrlMeas);
 	}
 	// 获取数据
@@ -303,7 +305,6 @@ LRESULT CHG4930DataRecDlg::OnReceiveStr(WPARAM strRec, LPARAM commPort) {
 				lfmVelDeltaZ = (RecData[38] << 24 | RecData[39] << 16 | RecData[40] << 8 | RecData[41]) * pow(2, -27)*0.3048;
 			}
 	}	
-	//****************数据保存*************************//
 	
 	// ***************数据显示*************************//
 	if (mBytes) {
@@ -324,6 +325,7 @@ LRESULT CHG4930DataRecDlg::OnReceiveStr(WPARAM strRec, LPARAM commPort) {
 		mVelDeltaY.Format(_T("%.8lf"), lfmVelDeltaY);
 		mVelDeltaZ.Format(_T("%.8lf"), lfmVelDeltaZ);		
 		// 在图形界面显示数据
+		/*
 		m_AguRateX.SetWindowText(mAguRateX);
 		m_AguRateY.SetWindowText(mAguRateY);
 		m_AguRateZ.SetWindowText(mAguRateZ);
@@ -335,11 +337,52 @@ LRESULT CHG4930DataRecDlg::OnReceiveStr(WPARAM strRec, LPARAM commPort) {
 		m_AngDeltaZ.SetWindowText(mAngDeltaZ);
 		m_VelDeltaX.SetWindowText(mVelDeltaX);
 		m_VelDeltaY.SetWindowText(mVelDeltaY);
-		m_VelDeltaZ.SetWindowText(mVelDeltaZ);
+		m_VelDeltaZ.SetWindowText(mVelDeltaZ);*/
 	}	
 	else
 	{
 		ResetDisplay();
+	}
+	//****************数据保存*************************//	
+	CString pathTemp, fileStrTemp;
+	fileStrTemp = mAguRateX + _T("\t") + mAguRateY + _T("\t") + mAguRateZ + _T("\t") +
+		mAccX + _T("\t") + mAccY + _T("\t") + mAccZ +  _T("\t") + 
+		mAngDeltaX + _T("\t") + mAngDeltaY + _T("\t") + mAngDeltaZ + _T("\t") +
+		mVelDeltaX + _T("\t") + mVelDeltaY + _T("\t") + mVelDeltaZ;
+	//int pathLength=m_FilePath.GetWindowTextLength();
+	m_FilePath.GetWindowText(pathTemp);
+	if (!pathTemp.IsEmpty()){	
+		CString countTemp;
+		mDataCount++;
+		countTemp.Format(_T("%d"), mDataCount);
+		m_DataCount.SetWindowText(countTemp);
+		fileStrTemp =  countTemp + _T("\t") +fileStrTemp+ _T("\t");
+		if (!oneSecFlag) {
+			SetTimer(1, 1000, NULL);
+			mPreDataCount = mDataCount;
+			oneSecFlag = 1;
+		}			
+		file.Write(fileStrTemp, 2*fileStrTemp.GetLength());	
+		double timetemp = 0;
+		timetemp = 1000.0 * (clock() - (double)time_stt) / (double)CLOCKS_PER_SEC;
+		/*mSec += timetemp;
+		if (mSec <= 995.0 && mSec > 0.0) 
+		{
+			mFrameRate++;
+		}
+		else if (mSec > 995.0 && mSec <= 1005.0) 
+		{
+			mPreDataCount = mFrameRate;
+			mFrameRate = 0;
+			mSec = 0;
+		}*/
+		countTemp.Format(_T("%.8lf"),timetemp);
+		file.Write(countTemp, 2*countTemp.GetLength());
+		//countTemp.Format(_T("%d"), mPreDataCount);
+		//countTemp = _T("\t") + countTemp;
+		//file.Write(countTemp, 2*countTemp.GetLength());		
+		CString line_feeds = L"\r\n";
+		file.Write(line_feeds, wcslen(line_feeds) * sizeof(wchar_t));	
 	}
 	
 	return TRUE;
@@ -355,6 +398,11 @@ void CHG4930DataRecDlg::OnBnClickedBtnOpen()
 		m_Com.ClosePort();		
 		m_OpenCom.SetWindowText(_T("打开串口"));
 		// 修改状态
+		if (fileOpenFlag) {
+			file.Close();
+			fileOpenFlag = 0;
+		}
+		m_ChosePath.EnableWindow(TRUE);
 		m_PortNum.EnableWindow(TRUE);
 		m_BaudRate.EnableWindow(TRUE);
 		m_DataBit.EnableWindow(TRUE);
@@ -374,15 +422,24 @@ void CHG4930DataRecDlg::OnBnClickedBtnOpen()
 
 		if (m_Com.InitPort(this->GetSafeHwnd(), SelPortNO, SelBaudRate))
 		{
-			m_Com.StartMonitoring();	
-			//AfxMessageBox(_T("Monitoring!"));
+			mDataCount = 0, mFrameRate = 0;
+			CString temp;
+			temp.Format(_T("%d"), mDataCount);
+			m_DataCount.SetWindowText(temp);			
+			m_Com.StartMonitoring();			
 			m_OpenCom.SetWindowText(_T("关闭串口"));
 			// 修改状态
+			m_FilePath.GetWindowText(temp);  //如果文件路径非空			
+			if (!temp.IsEmpty()&& fileOpenFlag == 0) {
+				file.Open(temp, CFile::modeCreate | CFile::modeReadWrite);
+				fileOpenFlag = 1;
+			}
+			m_ChosePath.EnableWindow(FALSE);
 			m_PortNum.EnableWindow(FALSE);
 			m_BaudRate.EnableWindow(FALSE);
 			m_DataBit.EnableWindow(FALSE);
 			m_CaliBit.EnableWindow(FALSE);
-			m_StopBit.EnableWindow(FALSE);
+			m_StopBit.EnableWindow(FALSE);		
 		}
 		else    // 串口打开失败
 		{
@@ -406,7 +463,11 @@ void CHG4930DataRecDlg::OnBnClickedSend()
 	char* m_str = "Youyinghui";
 	//m_Com.WriteToPort("abc",3);
 	m_Com.WriteToPort(m_str,11);*/
-
+	if (fileOpenFlag) {
+		m_Com.ClosePort();
+		file.Close();
+		fileOpenFlag = 0;
+	}
 	CDialogEx::OnCancel();
 }
 
@@ -423,7 +484,51 @@ void CHG4930DataRecDlg::ResetDisplay() {
 	m_VelDeltaX.SetWindowText(_T("NaN"));
 	m_VelDeltaY.SetWindowText(_T("NaN"));
 	m_VelDeltaZ.SetWindowText(_T("NaN"));
+}
 
+CString CHG4930DataRecDlg::GetFileDirectory() 
+{
+	/*  获取文件夹
+	BROWSEINFO bi;
+	TCHAR name[MAX_PATH];
+	ITEMIDLIST* pidl;
+	ZeroMemory(&bi, sizeof(BROWSEINFO));
+	bi.hwndOwner = AfxGetMainWnd()->GetSafeHwnd();
+	bi.pszDisplayName = name;     // 输出缓冲区
+	bi.lpszTitle = _T("选择文件夹目录");
+	bi.ulFlags = BIF_NEWDIALOGSTYLE;   // 使用新的界面
+	bi.lpfn = NULL;
+	bi.lParam = 0;
+	bi.iImage = 0;
+	pidl = SHBrowseForFolder(&bi);    // 弹出对话框
+	if (pidl == NULL)   // 点了取消，或者选择了无效的文件夹则返回NULL
+		return _T("");
+	CString strDirectoryPath;
+	SHGetPathFromIDList(pidl, strDirectoryPath.GetBuffer(MAX_PATH));
+	strDirectoryPath.ReleaseBuffer();
+	if (strDirectoryPath.IsEmpty())
+		return _T("");
+	if (strDirectoryPath.Right(1) != "\\")
+		strDirectoryPath += "\\";
+	return strDirectoryPath;*/
+	// 获取文件路径
+	CString defaultDir = _T("C:\\");   // 默认打开的文件路径
+	CString fileName = _T("");		   // 默认打开的文件名
+	//CString filter = _T("文件 (*.txt) ");  
+	CFileDialog openFileDlg(TRUE, defaultDir, fileName, 
+		OFN_HIDEREADONLY |OFN_ALLOWMULTISELECT, NULL, 
+		AfxGetMainWnd(), 0, TRUE);
+	INT_PTR result = openFileDlg.DoModal();
+	CString filePath, mfilePath;
+	if (result == IDOK) {
+		POSITION pos = openFileDlg.GetStartPosition();
+		while (pos != NULL)
+		{
+			filePath = openFileDlg.GetNextPathName(pos);
+		}
+		mfilePath = openFileDlg.GetPathName();
+	}
+	return mfilePath;
 }
 //注释掉的内容
 /* 对WPARAM进行操作
@@ -447,3 +552,43 @@ void CHG4930DataRecDlg::ResetDisplay() {
 		mCtrlMeas0 = strRec & 0xFF00 << 8;    // 取最高8位（一个字节）的数据往后
 		itoa()
 	}*/
+
+void CHG4930DataRecDlg::OnBnClickedChosePath()
+{
+	// TODO: 在此添加控件通知处理程序代码
+	CString temp;
+	m_OpenCom.GetWindowText(temp);
+	if (temp == "关闭串口")
+	{
+		m_ChosePath.EnableWindow(FALSE);
+		AfxMessageBox(_T("串口已打开无法选择路径"));
+		return;
+	}
+	else 
+	{
+		m_ChosePath.EnableWindow(TRUE);
+	}
+	CString csmFilePath = GetFileDirectory();
+	m_FilePath.SetWindowText(csmFilePath);
+	if (csmFilePath.IsEmpty()) {
+		m_ChosePath.EnableWindow(TRUE);
+		AfxMessageBox(_T("路径为空，请重新选择"));
+	}
+	else if (csmFilePath.Right(3) != "txt")
+		AfxMessageBox(_T("文件类型错误，请重新选择！"));	
+	else {
+		file.Open(csmFilePath, CFile::modeCreate | CFile::modeReadWrite); 
+		fileOpenFlag = 1;
+	}	
+}
+
+void CHG4930DataRecDlg::OnTimer(UINT nIDEvent)
+{
+	KillTimer(1);
+	oneSecFlag = 0;
+	CString temp = _T("");
+	mFrameRate = mDataCount - mPreDataCount + 1;
+	temp.Format(_T("%d"), mFrameRate);
+	m_FrameRate.SetWindowText(temp);
+	mFrameRate = 0;
+}

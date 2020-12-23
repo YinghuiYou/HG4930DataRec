@@ -39,6 +39,7 @@ protected:
 	//afx_msg BOOL OnDeviceChange(UINT nEventType, DWORD dwData);
 	//afx_msg LONG OnCommunication(WPARAM ch, LPARAM port);    // 串口接收处理数据
 	LRESULT afx_msg OnReceiveStr(WPARAM strRec, LPARAM commInfo);
+	afx_msg void OnTimer(UINT_PTR);
 	DECLARE_MESSAGE_MAP()
 public:
 	// 串口号选择
@@ -96,4 +97,7 @@ public:
 	CButton m_OpenCom;
 	afx_msg void OnBnClickedSend();	
 	void ResetDisplay();
+	CString GetFileDirectory();
+	afx_msg void OnBnClickedChosePath();
+	CButton m_ChosePath;	
 };
